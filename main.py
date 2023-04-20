@@ -1,4 +1,14 @@
 def identical_machines(tasks, rate, n):
+    '''
+    tasks:  A list of tuples, where the first element in the tuple is the *unique* task_id, and
+            the second element is the difficulty (in terms of story points).
+    rate:   This is the work rate for the processors. Each processor has the same work rate in this 
+            procedure, so rate is just a single value.
+    n:      The number of processors you wish to use.
+
+    returns: (schedule, makespan). schedule is a 2D array, where each row corresponds to the schedule of a 
+                processor. Makespan is a single number
+    '''
     schedule = [[] for _ in range(n)]
     processor_loads = [0 for _ in range(n)]
 
@@ -18,6 +28,14 @@ def identical_machines(tasks, rate, n):
 
 
 def uniform_machines(tasks, processors):
+    '''
+    tasks:  A list of tuples, where the first element in the tuple is the *unique* task_id, and
+            the second element is the difficulty (in terms of story points).
+    processors: A list of Processor objects (defined below) that you wish to schedule your tasks to.
+
+    returns: (schedule, makespan). schedule is a 2D array, where each row corresponds to the schedule of a 
+                processor. Makespan is a single number
+    '''
     rates = [processor.rate for processor in processors]
     n = len(rates)
     schedule = [[] for _ in range(n)]
@@ -37,6 +55,64 @@ def uniform_machines(tasks, processors):
 
     makespan = max([processor_loads[i] / rates[i] for i in range(n)])
     return schedule, makespan
+
+
+def schedule_with_dependencies(tasks, processors, dag):
+    '''
+    tasks:  A list of tuples, where the first element in the tuple is the *unique* task_id, and
+            the second element is the difficulty (in terms of story points).
+    processors: A list of Processor objects (defined below) that you wish to schedule your tasks to.
+    dag:    This is a dictionary, where the keys are task_id's and the values are lists of task_id's. 
+            Task A depends on task B if B is in dag[A]. That is, dag[A] contains all of the task_id's that
+            must be completed before task A can be processed.
+
+    returns: (schedule, makespan). schedule is a 2D array, where each row corresponds to the schedule of a 
+                processor. Makespan is a single number
+    '''
+    n = len(processors)
+    schedule = [[] for _ in range(n)]
+
+    timestep_size = get_min_timestep(processors)
+
+    # we execute until all tasks are completed
+    while True:
+        for i, processor in enumerate(processors):
+            # if a processor is available, try to schedule it a task
+            if len(processor.current_work) == 0:
+                picked_task = get_available_task(tasks, dag)
+
+                # If you found one, execute it.
+                if picked_task is not None:
+                    a, _ = picked_task
+                    processor.current_work.append(picked_task)
+                    tasks = [(_id, _duration) for _id, _duration in tasks if _id != a]
+                    schedule[i].append(picked_task)
+                # if no task is found, that means the tasks' dependencies aren't satisfied
+                # so processor needs to idle
+                elif len(tasks) > 0:
+                    schedule[i].append((-1, timestep_size * processor.rate))
+
+        take_one_step_in_time(processors, timestep_size, dag)
+        if len(tasks) == 0:
+            break
+
+    # Calculate the makespan to return
+    makespan = -1
+    for i, lst in enumerate(schedule):
+        rate = processors[i].rate
+        total = 0
+        for _, duration in lst:
+            total += duration / rate
+        if total > makespan:
+            makespan = total
+
+    return collapse_idles(schedule), makespan
+
+
+
+'''
+Below are helper methods for the dependency scheduling algorithm above
+'''
 
 
 def remove_dependency_from_dag(dag, id):
@@ -99,42 +175,6 @@ def collapse_idles(schedule):
     return collapsed
 
 
-
-def schedule_with_dependencies(tasks, processors, dag):
-    n = len(processors)
-    schedule = [[] for _ in range(n)]
-
-    timestep_size = get_min_timestep(processors)
-
-    while True:
-        for i, processor in enumerate(processors):
-            if len(processor.current_work) == 0:
-                picked_task = get_available_task(tasks, dag)
-
-                if picked_task is not None:
-                    a, _ = picked_task
-                    processor.current_work.append(picked_task)
-                    tasks = [(_id, _duration) for _id, _duration in tasks if _id != a]
-                    schedule[i].append(picked_task)
-                elif len(tasks) > 0:
-                    schedule[i].append((-1, timestep_size * processor.rate))
-
-        take_one_step_in_time(processors, timestep_size, dag)
-        if len(tasks) == 0:
-            break
-
-    makespan = -1
-    for i, lst in enumerate(schedule):
-        rate = processors[i].rate
-        total = 0
-        for _, duration in lst:
-            total += duration / rate
-        if total > makespan:
-            makespan = total
-
-    return collapse_idles(schedule), makespan
-
-
 class Processor:
     def __init__(self, rate):
         self.current_work = []
@@ -153,8 +193,27 @@ def print_makespan_schedule(makespan, schedule):
                 print(f'({a}, {b}), ', end='')
 
 
+
+
+
+'''
+Below is where you execute the code. 
+
+You will encode your problem first, then run whatever method you want to get a schedule.
+
+You can print the schedule out using print_makespan_schedule()
+'''
+
+
+
+
 if __name__ == '__main__':
 
+    '''
+    Create your list of processors. 
+
+    The argument is the work rate of the processor (i.e. story points per hour)
+    '''
     processors = []
     for i in range(20):
         if i < 5:
@@ -162,6 +221,13 @@ if __name__ == '__main__':
         else:
             processors.append(Processor(1))
 
+
+    '''
+    Create your list of tasks.
+
+    The task list is a list of tuples, with the first element in the tuple
+    being the task_id, and the second being the task_length (i.e., story points)
+    '''
     tasks = []
     for i in range(1, 200 + 1):
         if i <= 75:
@@ -182,6 +248,16 @@ if __name__ == '__main__':
             tasks.append((i, 8))
         elif i <= 200:
             tasks.append((i, 9))
+
+
+    '''
+    Create your dependency graph.
+
+    This is implemented as a dictionary, where the keys are task_id's and the values are lists of task_id's.
+
+    The list of task_id's for a given key are the dependency of that task. For example, if 
+    dag[1] == [2, 3], then tasks 2 and 3 must be completed before task 1 can be scheduled.
+    '''
 
     dag = dict()
     for id, _ in tasks:
@@ -204,6 +280,13 @@ if __name__ == '__main__':
 
     for comes_later in range(170, 175 + 1):
         dag[comes_later].append(101)
+
+
+
+
+    '''
+    Here, we print out the results from the three approaches we are investigating.
+    '''
 
     print()
     print('############### Identical #########################')
